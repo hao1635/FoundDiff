@@ -1,6 +1,9 @@
 # FoundDiff
 Official implementation of "FoundDiff: Foundational Diffusion Model for Generalizable Low-Dose CT Denoising" 
 
+## Approach
+![](figs/network.png)
+
 
 ## Updates
 July, 2025: initial commit.  
