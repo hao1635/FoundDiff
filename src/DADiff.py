@@ -561,141 +561,6 @@ class TimestepEmbedder(nn.Module):
         t_emb = self.mlp(t_freq)
         return t_emb
 
-class Unet(nn.Module):
-    def __init__(
-        self,
-        dim,
-        init_dim=None,
-        out_dim=None,
-        dim_mults=(1, 2, 4, 8),
-        channels=1,
-        self_condition=False,
-        resnet_block_groups=8,
-        learned_variance=False,
-        learned_sinusoidal_cond=False,
-        random_fourier_features=False,
-        learned_sinusoidal_dim=16,
-        condition=False,
-        input_condition=False
-    ):
-        super().__init__()
-
-        # determine dimensions
-
-        self.channels = channels
-        self.self_condition = self_condition
-        input_channels = channels + channels * \
-            (1 if self_condition else 0) + channels * \
-            (1 if condition else 0) + channels * (1 if input_condition else 0)
-
-        init_dim = default(init_dim, dim)
-        self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding=3)
-
-        dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
-        in_out = list(zip(dims[:-1], dims[1:]))
-
-        block_klass = partial(ResnetBlock, groups=resnet_block_groups)
-
-        # time embeddings
-
-        time_dim = dim * 4
-
-        self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
-
-        if self.random_or_learned_sinusoidal_cond:
-            sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(
-                learned_sinusoidal_dim, random_fourier_features)
-            fourier_dim = learned_sinusoidal_dim + 1
-        else:
-            sinu_pos_emb = SinusoidalPosEmb(dim)
-            fourier_dim = dim
-
-        self.time_mlp = nn.Sequential(
-            sinu_pos_emb,
-            nn.Linear(fourier_dim, time_dim),
-            nn.GELU(),
-            nn.Linear(time_dim, time_dim)
-        )
-
-        # layers
-
-        self.downs = nn.ModuleList([])
-        self.ups = nn.ModuleList([])
-        num_resolutions = len(in_out)
-
-        for ind, (dim_in, dim_out) in enumerate(in_out):
-            is_last = ind >= (num_resolutions - 1)
-
-            self.downs.append(nn.ModuleList([
-                block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-                block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-                Residual(PreNorm(dim_in, LinearAttention(dim_in))),
-                Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(
-                    dim_in, dim_out, 3, padding=1)
-            ]))
-
-        mid_dim = dims[-1]
-        self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
-        self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
-        self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
-
-        for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
-            is_last = ind == (len(in_out) - 1)
-
-            self.ups.append(nn.ModuleList([
-                block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-                block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-                Residual(PreNorm(dim_out, LinearAttention(dim_out))),
-                Upsample(dim_out, dim_in) if not is_last else nn.Conv2d(
-                    dim_out, dim_in, 3, padding=1)
-            ]))
-
-        default_out_dim = channels * (1 if not learned_variance else 2)
-        self.out_dim = default(out_dim, default_out_dim)
-
-        self.final_res_block = block_klass(dim * 2, dim, time_emb_dim=time_dim)
-        self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
-
-    def forward(self, x, time, x_self_cond=None):
-        if self.self_condition:
-            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
-            x = torch.cat((x_self_cond, x), dim=1)
-
-        x = self.init_conv(x)
-        r = x.clone()
-        t = self.time_mlp(time)
-
-        h = []
-
-        for block1, block2, attn, downsample in self.downs:
-            x = block1(x, t)
-            h.append(x)
-
-            x = block2(x, t)
-            x = attn(x)
-            h.append(x)
-
-            x = downsample(x)
-
-        x = self.mid_block1(x, t)
-        x = self.mid_attn(x)
-        x = self.mid_block2(x, t)
-
-        for block1, block2, attn, upsample in self.ups:
-            x = torch.cat((x, h.pop()), dim=1)
-            x = block1(x, t)
-
-            x = torch.cat((x, h.pop()), dim=1)
-            x = block2(x, t)
-            x = attn(x)
-
-            x = upsample(x)
-
-        x = torch.cat((x, r), dim=1)
-
-        x = self.final_res_block(x, t)
-        return self.final_conv(x)
-        
 # class Unet(nn.Module):
 #     def __init__(
 #         self,
@@ -726,7 +591,6 @@ class Unet(nn.Module):
 #         init_dim = default(init_dim, dim)
 #         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding=3)
 
-#         #ipdb.set_trace()
 #         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
 #         in_out = list(zip(dims[:-1], dims[1:]))
 
@@ -753,101 +617,35 @@ class Unet(nn.Module):
 #             nn.Linear(time_dim, time_dim)
 #         )
 
-
-#         condition=True
-#         if condition:
-#             self.clip_model=load('RN50', 'cpu')
-#             for param in self.clip_model.parameters():
-#                 param.requires_grad = False
-
-#             clipiqa=CLIPIQA(model_type='clipiqa+')
-            
-#             #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup/100_trainloss_8.623530.pth', map_location='cpu')
-
-#             #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup2_mayo/90_trainloss_10.010777.pth', map_location='cpu')
-#             state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup2_mayo_newhead/95_trainloss_10.010643.pth', map_location='cpu')
-
-#             #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP3/175_trainloss_0.100316.pth', map_location='cpu')
-#             #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP/100_trainloss_0.144409.pth', map_location='cpu')
-#             #state_dict=torch.load('/data/zhchen/DN_foundation/dose_checkpoints/clipiqa+_ab_lora3/80_trainloss_0.007333.pth', map_location='cpu')
-#             clipiqa.load_state_dict(state_dict, strict=True)
-#             self.dose_encoder=clipiqa
-#             for param in self.dose_encoder.parameters():
-#                 param.requires_grad = False
-#             self.dose_encoder.eval()
-
-
-#             # hidden_size=512
-#             # self.t_embedder = TimestepEmbedder(hidden_size)
-
-#             context_dim=1024
-#             self.prompt = nn.Parameter(torch.rand(1, time_dim))
-#             self.text_mlp = nn.Sequential(
-#                 nn.Linear(context_dim, time_dim), NonLinearity(),
-#                 nn.Linear(time_dim, time_dim))
-#             self.prompt_mlp = nn.Linear(time_dim, time_dim)
-
 #         # layers
 
 #         self.downs = nn.ModuleList([])
 #         self.ups = nn.ModuleList([])
 #         num_resolutions = len(in_out)
-#         base_d_state=4
-
 
 #         for ind, (dim_in, dim_out) in enumerate(in_out):
 #             is_last = ind >= (num_resolutions - 1)
 
-#             # self.downs.append(nn.ModuleList([
-#             #     block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-#             #     block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-#             #     Residual(PreNorm(dim_in, LinearAttention(dim_in))),
-#             #     Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(
-#             #         dim_in, dim_out, 3, padding=1)
-#             # ]))
-            
-#             if ind==0:
-#                 d_state=base_d_state
-#             else:
-#                 d_state=int(base_d_state * 2 ** ind)
 #             self.downs.append(nn.ModuleList([
-#                 #block_klass(dim_in, dim_in, time_emb_dim=time_dim),
 #                 block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-#                 # Mamba_block(hidden_size=dim_in, d_state=d_state,expand=2.0,dropout=0,cross=False if ind < 2 else True,time_emb_dim=time_dim),
-#                 Mamba_block(hidden_size=dim_in, d_state=d_state,expand=2.0,dropout=0,cross=False,time_emb_dim=time_dim),
-#                 #Residual(PreNorm(dim_in, SS2D(d_model=dim_in, d_state=base_d_state,expand=2.0,dropout=0))),
+#                 block_klass(dim_in, dim_in, time_emb_dim=time_dim),
+#                 Residual(PreNorm(dim_in, LinearAttention(dim_in))),
 #                 Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(
 #                     dim_in, dim_out, 3, padding=1)
 #             ]))
 
 #         mid_dim = dims[-1]
-
-#         self.mid_block = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
-#         self.mid_attn=Mamba_block(hidden_size=mid_dim, d_state=int(base_d_state * 2 ** 3),expand=2.0,dropout=0,cross=False,time_emb_dim=time_dim)
-#         #self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+#         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+#         self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
+#         self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
 
 #         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
 #             is_last = ind == (len(in_out) - 1)
 
-#             # self.ups.append(nn.ModuleList([
-#             #     block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-#             #     block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-#             #     Residual(PreNorm(dim_out, LinearAttention(dim_out))),
-#             #     Upsample(dim_out, dim_in) if not is_last else nn.Conv2d(
-#             #         dim_out, dim_in, 3, padding=1)
-#             # ]))
-            
-#             if (3-ind)==0:
-#                 d_state=base_d_state
-#             else:
-#                 d_state=int(base_d_state * 2 ** (3-ind))
-            
 #             self.ups.append(nn.ModuleList([
-#                 #block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
 #                 block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-#                 # Mamba_block(hidden_size=dim_out, d_state=d_state,expand=2.0,dropout=0,cross=False if ind > 1 else True,time_emb_dim=time_dim),
-#                 Mamba_block(hidden_size=dim_out, d_state=d_state,expand=2.0,dropout=0,cross=False,time_emb_dim=time_dim),
-#                 #Residual(PreNorm(dim_in, SS2D(d_model=dim_in, d_state=base_d_state,expand=2.0,dropout=0))),
+#                 block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
+#                 Residual(PreNorm(dim_out, LinearAttention(dim_out))),
 #                 Upsample(dim_out, dim_in) if not is_last else nn.Conv2d(
 #                     dim_out, dim_in, 3, padding=1)
 #             ]))
@@ -856,65 +654,267 @@ class Unet(nn.Module):
 #         self.out_dim = default(out_dim, default_out_dim)
 
 #         self.final_res_block = block_klass(dim * 2, dim, time_emb_dim=time_dim)
-#         #self.final_attn_block = Mamba_block(hidden_size=dim, d_state=base_d_state,expand=2.0,dropout=0,cross=False,time_emb_dim=time_dim),
 #         self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
 
-#     def forward(self, x,time, x_self_cond=None):
-        
+#     def forward(self, x, time, x_self_cond=None):
 #         if self.self_condition:
 #             x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
 #             x = torch.cat((x_self_cond, x), dim=1)
-        
-#         #ipdb.set_trace()
-#         _,dose_embedding,context_embedding= self.dose_encoder(x[:,1,:,:].unsqueeze(1).repeat(1,3,1,1))
-#         c=context_embedding.unsqueeze(1)
-#         #dose_embedding,context_embedding= self.dose_encoder.clip_model.encode_image(x[:,1,:,:].unsqueeze(1).repeat(1,3,1,1),pos_embedding=False)
-#         #c=self.dose_encoder.attnpool2d(context_embedding).unsqueeze(1)
 
-#         #context_embedding= self.dose_encoder.clip_model.visual(x[:,1,:,:].unsqueeze(1).repeat(1,3,1,1),return_token=True, pos_embedding=False)
-#         #c= torch.flatten(F.adaptive_avg_pool2d(context_embedding, (1, 1)),1).unsqueeze(1)
-#         #ipdb.set_trace()
 #         x = self.init_conv(x)
 #         r = x.clone()
-
 #         t = self.time_mlp(time)
-#         #t = self.t_embedder(time)
-        
-#         prompt_embedding = torch.softmax(self.text_mlp(dose_embedding), dim=1) * self.prompt
-#         prompt_embedding = self.prompt_mlp(prompt_embedding)
-
-#         t = t + prompt_embedding
 
 #         h = []
-#         for res_block, attn, downsample in self.downs:
 
-#             x = attn(x,c,t) 
-#             x = res_block(x)
-            
+#         for block1, block2, attn, downsample in self.downs:
+#             x = block1(x, t)
+#             h.append(x)
+
+#             x = block2(x, t)
+#             x = attn(x)
 #             h.append(x)
 
 #             x = downsample(x)
 
-#         x = self.mid_block(x)
-#         x = self.mid_attn(x,c,t)
+#         x = self.mid_block1(x, t)
+#         x = self.mid_attn(x)
+#         x = self.mid_block2(x, t)
 
-        
-#         for res_block, attn, upsample in self.ups:
+#         for block1, block2, attn, upsample in self.ups:
+#             x = torch.cat((x, h.pop()), dim=1)
+#             x = block1(x, t)
 
 #             x = torch.cat((x, h.pop()), dim=1)
-#             x = res_block(x)
-#             x = attn(x,c,t)
+#             x = block2(x, t)
+#             x = attn(x)
 
 #             x = upsample(x)
 
 #         x = torch.cat((x, r), dim=1)
 
-#         x = self.final_res_block(x)
-
-#         #ipdb.set_trace()
-#         #x = self.final_attn_block(x,c,t)
-
+#         x = self.final_res_block(x, t)
 #         return self.final_conv(x)
+        
+class Unet(nn.Module):
+    def __init__(
+        self,
+        dim,
+        init_dim=None,
+        out_dim=None,
+        dim_mults=(1, 2, 4, 8),
+        channels=1,
+        self_condition=False,
+        resnet_block_groups=8,
+        learned_variance=False,
+        learned_sinusoidal_cond=False,
+        random_fourier_features=False,
+        learned_sinusoidal_dim=16,
+        condition=False,
+        input_condition=False
+    ):
+        super().__init__()
+
+        # determine dimensions
+
+        self.channels = channels
+        self.self_condition = self_condition
+        input_channels = channels + channels * \
+            (1 if self_condition else 0) + channels * \
+            (1 if condition else 0) + channels * (1 if input_condition else 0)
+
+        init_dim = default(init_dim, dim)
+        self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding=3)
+
+        #ipdb.set_trace()
+        dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
+        in_out = list(zip(dims[:-1], dims[1:]))
+
+        block_klass = partial(ResnetBlock, groups=resnet_block_groups)
+
+        # time embeddings
+
+        time_dim = dim * 4
+
+        self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
+
+        if self.random_or_learned_sinusoidal_cond:
+            sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(
+                learned_sinusoidal_dim, random_fourier_features)
+            fourier_dim = learned_sinusoidal_dim + 1
+        else:
+            sinu_pos_emb = SinusoidalPosEmb(dim)
+            fourier_dim = dim
+
+        self.time_mlp = nn.Sequential(
+            sinu_pos_emb,
+            nn.Linear(fourier_dim, time_dim),
+            nn.GELU(),
+            nn.Linear(time_dim, time_dim)
+        )
+
+
+        condition=True
+        if condition:
+            self.clip_model=load('RN50', 'cpu')
+            for param in self.clip_model.parameters():
+                param.requires_grad = False
+
+            clipiqa=CLIPIQA(model_type='clipiqa+')
+            
+            #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup/100_trainloss_8.623530.pth', map_location='cpu')
+
+            #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup2_mayo/90_trainloss_10.010777.pth', map_location='cpu')
+            state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup2_mayo_newhead/95_trainloss_10.010643.pth', map_location='cpu')
+
+            #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP3/175_trainloss_0.100316.pth', map_location='cpu')
+            #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP/100_trainloss_0.144409.pth', map_location='cpu')
+            #state_dict=torch.load('/data/zhchen/DN_foundation/dose_checkpoints/clipiqa+_ab_lora3/80_trainloss_0.007333.pth', map_location='cpu')
+            clipiqa.load_state_dict(state_dict, strict=True)
+            self.dose_encoder=clipiqa
+            for param in self.dose_encoder.parameters():
+                param.requires_grad = False
+            self.dose_encoder.eval()
+
+
+            # hidden_size=512
+            # self.t_embedder = TimestepEmbedder(hidden_size)
+
+            context_dim=1024
+            self.prompt = nn.Parameter(torch.rand(1, time_dim))
+            self.text_mlp = nn.Sequential(
+                nn.Linear(context_dim, time_dim), NonLinearity(),
+                nn.Linear(time_dim, time_dim))
+            self.prompt_mlp = nn.Linear(time_dim, time_dim)
+
+        # layers
+
+        self.downs = nn.ModuleList([])
+        self.ups = nn.ModuleList([])
+        num_resolutions = len(in_out)
+        base_d_state=4
+
+
+        for ind, (dim_in, dim_out) in enumerate(in_out):
+            is_last = ind >= (num_resolutions - 1)
+
+            # self.downs.append(nn.ModuleList([
+            #     block_klass(dim_in, dim_in, time_emb_dim=time_dim),
+            #     block_klass(dim_in, dim_in, time_emb_dim=time_dim),
+            #     Residual(PreNorm(dim_in, LinearAttention(dim_in))),
+            #     Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(
+            #         dim_in, dim_out, 3, padding=1)
+            # ]))
+            
+            if ind==0:
+                d_state=base_d_state
+            else:
+                d_state=int(base_d_state * 2 ** ind)
+            self.downs.append(nn.ModuleList([
+                #block_klass(dim_in, dim_in, time_emb_dim=time_dim),
+                block_klass(dim_in, dim_in, time_emb_dim=time_dim),
+                # Mamba_block(hidden_size=dim_in, d_state=d_state,expand=2.0,dropout=0,cross=False if ind < 2 else True,time_emb_dim=time_dim),
+                Mamba_block(hidden_size=dim_in, d_state=d_state,expand=2.0,dropout=0,cross=False,time_emb_dim=time_dim),
+                #Residual(PreNorm(dim_in, SS2D(d_model=dim_in, d_state=base_d_state,expand=2.0,dropout=0))),
+                Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(
+                    dim_in, dim_out, 3, padding=1)
+            ]))
+
+        mid_dim = dims[-1]
+
+        self.mid_block = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_attn=Mamba_block(hidden_size=mid_dim, d_state=int(base_d_state * 2 ** 3),expand=2.0,dropout=0,cross=False,time_emb_dim=time_dim)
+        #self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+
+        for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
+            is_last = ind == (len(in_out) - 1)
+
+            # self.ups.append(nn.ModuleList([
+            #     block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
+            #     block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
+            #     Residual(PreNorm(dim_out, LinearAttention(dim_out))),
+            #     Upsample(dim_out, dim_in) if not is_last else nn.Conv2d(
+            #         dim_out, dim_in, 3, padding=1)
+            # ]))
+            
+            if (3-ind)==0:
+                d_state=base_d_state
+            else:
+                d_state=int(base_d_state * 2 ** (3-ind))
+            
+            self.ups.append(nn.ModuleList([
+                #block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
+                block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
+                # Mamba_block(hidden_size=dim_out, d_state=d_state,expand=2.0,dropout=0,cross=False if ind > 1 else True,time_emb_dim=time_dim),
+                Mamba_block(hidden_size=dim_out, d_state=d_state,expand=2.0,dropout=0,cross=False,time_emb_dim=time_dim),
+                #Residual(PreNorm(dim_in, SS2D(d_model=dim_in, d_state=base_d_state,expand=2.0,dropout=0))),
+                Upsample(dim_out, dim_in) if not is_last else nn.Conv2d(
+                    dim_out, dim_in, 3, padding=1)
+            ]))
+
+        default_out_dim = channels * (1 if not learned_variance else 2)
+        self.out_dim = default(out_dim, default_out_dim)
+
+        self.final_res_block = block_klass(dim * 2, dim, time_emb_dim=time_dim)
+        #self.final_attn_block = Mamba_block(hidden_size=dim, d_state=base_d_state,expand=2.0,dropout=0,cross=False,time_emb_dim=time_dim),
+        self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
+
+    def forward(self, x,time, x_self_cond=None):
+        
+        if self.self_condition:
+            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
+            x = torch.cat((x_self_cond, x), dim=1)
+        
+        #ipdb.set_trace()
+        _,dose_embedding,context_embedding= self.dose_encoder(x[:,1,:,:].unsqueeze(1).repeat(1,3,1,1))
+        c=context_embedding.unsqueeze(1)
+        #dose_embedding,context_embedding= self.dose_encoder.clip_model.encode_image(x[:,1,:,:].unsqueeze(1).repeat(1,3,1,1),pos_embedding=False)
+        #c=self.dose_encoder.attnpool2d(context_embedding).unsqueeze(1)
+
+        #context_embedding= self.dose_encoder.clip_model.visual(x[:,1,:,:].unsqueeze(1).repeat(1,3,1,1),return_token=True, pos_embedding=False)
+        #c= torch.flatten(F.adaptive_avg_pool2d(context_embedding, (1, 1)),1).unsqueeze(1)
+        #ipdb.set_trace()
+        x = self.init_conv(x)
+        r = x.clone()
+
+        t = self.time_mlp(time)
+        #t = self.t_embedder(time)
+        
+        prompt_embedding = torch.softmax(self.text_mlp(dose_embedding), dim=1) * self.prompt
+        prompt_embedding = self.prompt_mlp(prompt_embedding)
+
+        t = t + prompt_embedding
+
+        h = []
+        for res_block, attn, downsample in self.downs:
+
+            x = attn(x,c,t) 
+            x = res_block(x)
+            
+            h.append(x)
+
+            x = downsample(x)
+
+        x = self.mid_block(x)
+        x = self.mid_attn(x,c,t)
+
+        
+        for res_block, attn, upsample in self.ups:
+
+            x = torch.cat((x, h.pop()), dim=1)
+            x = res_block(x)
+            x = attn(x,c,t)
+
+            x = upsample(x)
+
+        x = torch.cat((x, r), dim=1)
+
+        x = self.final_res_block(x)
+
+        #ipdb.set_trace()
+        #x = self.final_attn_block(x,c,t)
+
+        return self.final_conv(x)
 
 
 class UnetRes(nn.Module):
