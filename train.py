@@ -3,12 +3,8 @@ import sys
 from src.util import get_logger
 
 from src.denoising_diffusion_pytorch import GaussianDiffusion
-from src.residual_denoising_diffusion_pytorch_final3 import (ResidualDiffusion,
-                                                      Trainer, Unet, UnetRes,
-                                                      set_seed)
-# from src.residual_denoising_diffusion_pytorch_abla import (ResidualDiffusion,
-#                                                       Trainer, Unet, UnetRes,
-#                                                       set_seed)
+from src.DADiff import (ResidualDiffusion,Trainer, Unet, UnetRes,set_seed)
+
 
 import ipdb
 import argparse
