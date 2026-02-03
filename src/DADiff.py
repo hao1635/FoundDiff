@@ -41,7 +41,7 @@ from .emamba2 import SS2D
 
 from .model_clipiqa import load
 # from .model_clipiqalora3 import CLIPIQA
-from .model_clipiqa3 import CLIPIQA
+from .DACLIP import CLIPIQA
 
 from open_clip import create_model_from_pretrained, get_tokenizer # works on open-clip-torch>=2.23.0, timm>=0.9.8
 
@@ -761,15 +761,7 @@ class Unet(nn.Module):
                 param.requires_grad = False
 
             clipiqa=CLIPIQA(model_type='clipiqa+')
-            
-            #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup/100_trainloss_8.623530.pth', map_location='cpu')
-
-            #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup2_mayo/90_trainloss_10.010777.pth', map_location='cpu')
-            state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP_rnc_sup2_mayo_newhead/95_trainloss_10.010643.pth', map_location='cpu')
-
-            #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP3/175_trainloss_0.100316.pth', map_location='cpu')
-            #state_dict=torch.load('/mnt/miah203/zhchen/DN_foundation/dose_checkpoints/Dose_CLIP/100_trainloss_0.144409.pth', map_location='cpu')
-            #state_dict=torch.load('/data/zhchen/DN_foundation/dose_checkpoints/clipiqa+_ab_lora3/80_trainloss_0.007333.pth', map_location='cpu')
+            state_dict=torch.load('Dose-CLIP.pth', map_location='cpu')
             clipiqa.load_state_dict(state_dict, strict=True)
             self.dose_encoder=clipiqa
             for param in self.dose_encoder.parameters():
