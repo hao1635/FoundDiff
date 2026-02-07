@@ -6,7 +6,7 @@ Official implementation of "FoundDiff: Foundational Diffusion Model for Generali
 
 
 ## Updates
-Feb, 2026: Upload DA-CLIP model weight (https://drive.google.com/drive/folders/1B33XyPqC9KkmzmfrCq20-7Xxuf-23PMc?usp=sharing)   
+Feb, 2026: Upload DA-CLIP and FoundDiff model weight (https://drive.google.com/drive/folders/1B33XyPqC9KkmzmfrCq20-7Xxuf-23PMc?usp=sharing)   
 July, 2025: initial commit.  
 
 
