@@ -34,7 +34,7 @@ CUDA_VISIBLE_DEVICES=1 python train.py --name FoundDiff --is_train --train_num_s
 
 #### Inference & testing:
 ```
-CUDA_VISIBLE_DEVICES=4 python train.py --name FoundDiff --epoch 300 --dataset 2020_seen --eval
+CUDA_VISIBLE_DEVICES=4 python train.py --name FoundDiff --epoch 400 --dataset 2020_seen
 ```
 Please refer to options files for more setting.
 
