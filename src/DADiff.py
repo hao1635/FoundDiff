@@ -1,5 +1,4 @@
 
-### 两个条件,c是第四层特征cross-attention，t=p+t,
 import copy
 import math
 import os, glob, shutil
@@ -488,40 +487,6 @@ class Mamba_block(nn.Module):
         x = x + gate_mlp.unsqueeze(1).unsqueeze(1) * self.attn_blk(modulate(self.norm2(x), shift_mlp, scale_mlp).permute(0, 3, 1, 2).contiguous(),c).permute(0, 2, 3, 1).contiguous()
         return x.permute(0, 3, 1, 2)
 
-# class Mamba_block(nn.Module):
-#     """
-#     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
-#     """
-#     def __init__(self, hidden_size, d_state,expand,dropout):
-#         super().__init__()
-#         self.norm1 = nn.LayerNorm(hidden_size)
-#         self.mamba = SS2D(d_model=hidden_size, d_state=d_state,expand=expand,dropout=dropout)
-#         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-
-#         self.adaLN_modulation1 = nn.Sequential(
-#             nn.SiLU(),
-#             nn.Linear(512, 3 * hidden_size, bias=True)
-#         )
-#         self.adaLN_modulation2 = nn.Sequential(
-#             nn.SiLU(),
-#             nn.Linear(512, 3 * hidden_size, bias=True)
-#         )
-#         self.attn_blk = LinearAttention(hidden_size)
-#         #self.mlp=Mlp(in_features=512, hidden_features=hidden_size, act_layer=approx_gelu, drop=0)
-
-#     def forward(self, x, c,t):
-#         B,C,H,W=x.shape
-    
-#         x=x.permute(0,2,3,1) # b,h,w,c
-
-#         shift_msa, scale_msa, gate_msa = self.adaLN_modulation1(t).chunk(3, dim=1)
-
-#         shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation2(t).chunk(3, dim=1)
-#         #ipdb.set_trace()
-#         x = x + gate_msa.unsqueeze(1).unsqueeze(1) * self.mamba(modulate(self.norm1(x), shift_msa, scale_msa))
-#         x = x + gate_mlp.unsqueeze(1).unsqueeze(1) * self.attn_blk(modulate(self.norm2(x), shift_mlp, scale_mlp).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
-#         return x.permute(0, 3, 1, 2)
-
 class TimestepEmbedder(nn.Module):
     """
     Embeds scalar timesteps into vector representations.
@@ -561,141 +526,7 @@ class TimestepEmbedder(nn.Module):
         t_emb = self.mlp(t_freq)
         return t_emb
 
-# class Unet(nn.Module):
-#     def __init__(
-#         self,
-#         dim,
-#         init_dim=None,
-#         out_dim=None,
-#         dim_mults=(1, 2, 4, 8),
-#         channels=1,
-#         self_condition=False,
-#         resnet_block_groups=8,
-#         learned_variance=False,
-#         learned_sinusoidal_cond=False,
-#         random_fourier_features=False,
-#         learned_sinusoidal_dim=16,
-#         condition=False,
-#         input_condition=False
-#     ):
-#         super().__init__()
 
-#         # determine dimensions
-
-#         self.channels = channels
-#         self.self_condition = self_condition
-#         input_channels = channels + channels * \
-#             (1 if self_condition else 0) + channels * \
-#             (1 if condition else 0) + channels * (1 if input_condition else 0)
-
-#         init_dim = default(init_dim, dim)
-#         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding=3)
-
-#         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
-#         in_out = list(zip(dims[:-1], dims[1:]))
-
-#         block_klass = partial(ResnetBlock, groups=resnet_block_groups)
-
-#         # time embeddings
-
-#         time_dim = dim * 4
-
-#         self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
-
-#         if self.random_or_learned_sinusoidal_cond:
-#             sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(
-#                 learned_sinusoidal_dim, random_fourier_features)
-#             fourier_dim = learned_sinusoidal_dim + 1
-#         else:
-#             sinu_pos_emb = SinusoidalPosEmb(dim)
-#             fourier_dim = dim
-
-#         self.time_mlp = nn.Sequential(
-#             sinu_pos_emb,
-#             nn.Linear(fourier_dim, time_dim),
-#             nn.GELU(),
-#             nn.Linear(time_dim, time_dim)
-#         )
-
-#         # layers
-
-#         self.downs = nn.ModuleList([])
-#         self.ups = nn.ModuleList([])
-#         num_resolutions = len(in_out)
-
-#         for ind, (dim_in, dim_out) in enumerate(in_out):
-#             is_last = ind >= (num_resolutions - 1)
-
-#             self.downs.append(nn.ModuleList([
-#                 block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-#                 block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-#                 Residual(PreNorm(dim_in, LinearAttention(dim_in))),
-#                 Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(
-#                     dim_in, dim_out, 3, padding=1)
-#             ]))
-
-#         mid_dim = dims[-1]
-#         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
-#         self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
-#         self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
-
-#         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
-#             is_last = ind == (len(in_out) - 1)
-
-#             self.ups.append(nn.ModuleList([
-#                 block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-#                 block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-#                 Residual(PreNorm(dim_out, LinearAttention(dim_out))),
-#                 Upsample(dim_out, dim_in) if not is_last else nn.Conv2d(
-#                     dim_out, dim_in, 3, padding=1)
-#             ]))
-
-#         default_out_dim = channels * (1 if not learned_variance else 2)
-#         self.out_dim = default(out_dim, default_out_dim)
-
-#         self.final_res_block = block_klass(dim * 2, dim, time_emb_dim=time_dim)
-#         self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
-
-#     def forward(self, x, time, x_self_cond=None):
-#         if self.self_condition:
-#             x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
-#             x = torch.cat((x_self_cond, x), dim=1)
-
-#         x = self.init_conv(x)
-#         r = x.clone()
-#         t = self.time_mlp(time)
-
-#         h = []
-
-#         for block1, block2, attn, downsample in self.downs:
-#             x = block1(x, t)
-#             h.append(x)
-
-#             x = block2(x, t)
-#             x = attn(x)
-#             h.append(x)
-
-#             x = downsample(x)
-
-#         x = self.mid_block1(x, t)
-#         x = self.mid_attn(x)
-#         x = self.mid_block2(x, t)
-
-#         for block1, block2, attn, upsample in self.ups:
-#             x = torch.cat((x, h.pop()), dim=1)
-#             x = block1(x, t)
-
-#             x = torch.cat((x, h.pop()), dim=1)
-#             x = block2(x, t)
-#             x = attn(x)
-
-#             x = upsample(x)
-
-#         x = torch.cat((x, r), dim=1)
-
-#         x = self.final_res_block(x, t)
-#         return self.final_conv(x)
-        
 class Unet(nn.Module):
     def __init__(
         self,
@@ -1105,24 +936,6 @@ class ResidualDiffusion(nn.Module):
         self.input_condition = input_condition
         self.input_condition_mask = input_condition_mask
         self.test_res_or_noise = test_res_or_noise
-
-
-        # self.context_encoder, _ = create_model_from_pretrained('hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224',
-        #                                                 cache_dir='/data/zhchen/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224')
-        # for param in self.context_encoder.parameters():
-        #     param.requires_grad = False
-        # self.context_align=nn.Sequential(
-        #                     nn.SiLU(),
-        #                     nn.Linear(512, 2 * 512, bias=True),
-        #                     nn.SiLU(),  
-        #                     nn.Linear(2 * 512, 4 * 512, bias=True),
-        #                     nn.SiLU(),  
-        #                     nn.Linear(4 * 512, 4 * 512, bias=True),
-        #                     nn.SiLU(),
-        #                     nn.Linear(4 * 512, 2 * 512, bias=True),
-        #                     nn.SiLU(),
-        #                     nn.Linear(2 * 512, 512, bias=True),
-        #                 )
 
         if self.condition:
             self.sum_scale = sum_scale if sum_scale else 0.01
@@ -1537,56 +1350,6 @@ class ResidualDiffusion(nn.Module):
             if not last:
                 img_list.append(img)
 
-
-        
-        # for time, time_next in tqdm(time_pairs, desc='sampling loop time step'):
-        #     time_cond = torch.full(
-        #         (batch,), time, device=device, dtype=torch.long)
-        #     self_cond = x_start if self.self_condition else None
-        #     preds = self.model_predictions(
-        #         x_input, img, time_cond, x_input_condition, self_cond)
-
-        #     pred_res = preds.pred_res
-        #     pred_noise = preds.pred_noise
-        #     x_start = preds.pred_x_start
-
-        #     if time_next < 0:
-        #         img = x_start
-        #         if not last:
-        #             img_list.append(img)
-        #         continue
-
-        #     alpha_cumsum = self.alphas_cumsum[time]
-        #     alpha_cumsum_next = self.alphas_cumsum[time_next]
-        #     alpha = alpha_cumsum-alpha_cumsum_next
-
-        #     betas2_cumsum = self.betas2_cumsum[time]
-        #     betas2_cumsum_next = self.betas2_cumsum[time_next]
-        #     betas2 = betas2_cumsum-betas2_cumsum_next
-        #     betas = betas2.sqrt()
-        #     betas_cumsum = self.betas_cumsum[time]
-        #     betas_cumsum_next = self.betas_cumsum[time_next]
-        #     sigma2 = eta * (betas2*betas2_cumsum_next/betas2_cumsum)
-        #     sqrt_betas2_cumsum_next_minus_sigma2_divided_betas_cumsum = (
-        #         betas2_cumsum_next-sigma2).sqrt()/betas_cumsum
-
-        #     if eta == 0:
-        #         noise = 0
-        #     else:
-        #         noise = torch.randn_like(img)
-
-        #     if type == "use_pred_noise":
-        #         img = img - (betas_cumsum-(betas2_cumsum_next-sigma2).sqrt()) * \
-        #             pred_noise + sigma2.sqrt()*noise
-        #     elif type == "use_x_start":
-        #         img = sqrt_betas2_cumsum_next_minus_sigma2_divided_betas_cumsum*img + \
-        #             (1-sqrt_betas2_cumsum_next_minus_sigma2_divided_betas_cumsum)*x_start + \
-        #             (alpha_cumsum_next-alpha_cumsum*sqrt_betas2_cumsum_next_minus_sigma2_divided_betas_cumsum)*pred_res + \
-        #             sigma2.sqrt()*noise
-
-        #     if not last:
-        #         img_list.append(img)
-
         
         if self.condition:
             if not last:
@@ -1600,102 +1363,6 @@ class ResidualDiffusion(nn.Module):
             else:
                 img_list = [img]
             return unnormalize_to_zero_to_one(img_list)
-
-    # @torch.no_grad()
-    # def ddim_sample(self, x_input, shape, last=True):
-    #     if self.input_condition:
-    #         x_input_condition = x_input[1]
-    #     else:
-    #         x_input_condition = 0
-    #     x_input = x_input[0]
-
-    #     batch, device, total_timesteps, sampling_timesteps, eta, objective = shape[
-    #         0], self.betas.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
-
-    #     # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
-    #     times = torch.linspace(-1, total_timesteps - 1,
-    #                            steps=sampling_timesteps + 1)
-    #     times = list(reversed(times.int().tolist()))
-    #     # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
-    #     time_pairs = list(zip(times[:-1], times[1:]))
-
-    #     if self.condition:
-    #         img = x_input+math.sqrt(self.sum_scale) * \
-    #             torch.randn(shape, device=device)
-    #         input_add_noise = img
-    #     else:
-    #         img = torch.randn(shape, device=device)
-
-    #     x_start = None
-    #     type = "use_pred_noise"
-
-    #     if not last:
-    #         img_list = []
-
-    #     eta = 0
-
-    #     for time, time_next in tqdm(time_pairs, desc='sampling loop time step'):
-    #         time_cond = torch.full(
-    #             (batch,), time, device=device, dtype=torch.long)
-    #         self_cond = x_start if self.self_condition else None
-    #         preds = self.model_predictions(
-    #             x_input, img, time_cond, x_input_condition, self_cond)
-
-    #         pred_res = preds.pred_res
-    #         pred_noise = preds.pred_noise
-    #         x_start = preds.pred_x_start
-
-    #         if time_next < 0:
-    #             img = x_start
-    #             if not last:
-    #                 img_list.append(img)
-    #             continue
-
-    #         alpha_cumsum = self.alphas_cumsum[time]
-    #         alpha_cumsum_next = self.alphas_cumsum[time_next]
-    #         alpha = alpha_cumsum-alpha_cumsum_next
-
-    #         betas2_cumsum = self.betas2_cumsum[time]
-    #         betas2_cumsum_next = self.betas2_cumsum[time_next]
-    #         betas2 = betas2_cumsum-betas2_cumsum_next
-    #         # betas2 = 1-(1-betas2_cumsum)/(1-betas2_cumsum_next)
-    #         betas = betas2.sqrt()
-    #         betas_cumsum = self.betas_cumsum[time]
-    #         betas_cumsum_next = self.betas_cumsum[time_next]
-    #         sigma2 = eta * (betas2*betas2_cumsum_next/betas2_cumsum)
-    #         sqrt_betas2_cumsum_next_minus_sigma2_divided_betas_cumsum = (
-    #             betas2_cumsum_next-sigma2).sqrt()/betas_cumsum
-
-    #         if eta == 0:
-    #             noise = 0
-    #         else:
-    #             noise = torch.randn_like(img)
-
-    #         if type == "use_pred_noise":
-    #             img = img - alpha*pred_res - \
-    #                 (betas_cumsum-(betas2_cumsum_next-sigma2).sqrt()) * \
-    #                 pred_noise + sigma2.sqrt()*noise
-    #         elif type == "use_x_start":
-    #             img = sqrt_betas2_cumsum_next_minus_sigma2_divided_betas_cumsum*img + \
-    #                 (1-sqrt_betas2_cumsum_next_minus_sigma2_divided_betas_cumsum)*x_start + \
-    #                 (alpha_cumsum_next-alpha_cumsum*sqrt_betas2_cumsum_next_minus_sigma2_divided_betas_cumsum)*pred_res + \
-    #                 sigma2.sqrt()*noise
-
-    #         if not last:
-    #             img_list.append(img)
-
-    #     if self.condition:
-    #         if not last:
-    #             img_list = [input_add_noise]+img_list
-    #         else:
-    #             img_list = [input_add_noise, img]
-    #         return unnormalize_to_zero_to_one(img_list)
-    #     else:
-    #         if not last:
-    #             img_list = img_list
-    #         else:
-    #             img_list = [img]
-    #         return unnormalize_to_zero_to_one(img_list)
 
     @torch.no_grad()
     def sample(self, x_input=0, batch_size=16, last=True):
@@ -1906,63 +1573,6 @@ class Trainer(object):
         self.num_unet = num_unet
 
         self.use_wandb=False
-
-        #ipdb.set_trace()
-        # if self.condition:
-        #     if len(folder) == 3:
-        #         self.condition_type = 1
-        #         # test_input
-        #         ds = dataset(folder[-1], self.image_size,
-        #                      augment_flip=False, convert_image_to=convert_image_to, condition=0, equalizeHist=equalizeHist, crop_patch=crop_patch, sample=True, generation=generation)
-        #         trian_folder = folder[0:2]
-
-        #         self.sample_dataset = ds
-        #         self.sample_loader = cycle(self.accelerator.prepare(DataLoader(self.sample_dataset, batch_size=num_samples, shuffle=True,
-        #                                                                        pin_memory=True, num_workers=4)))  # cpu_count()
-
-        #         ds = dataset(trian_folder, self.image_size, augment_flip=augment_flip,
-        #                      convert_image_to=convert_image_to, condition=1, equalizeHist=equalizeHist, crop_patch=crop_patch, generation=generation)
-        #         self.dl = cycle(self.accelerator.prepare(DataLoader(ds, batch_size=train_batch_size,
-        #                         shuffle=True, pin_memory=True, num_workers=4)))
-        #     elif len(folder) == 4:
-        #         self.condition_type = 2
-        #         # test_gt+test_input
-        #         ds = dataset(folder[2:4], self.image_size,
-        #                      augment_flip=False, convert_image_to=convert_image_to, condition=1, equalizeHist=equalizeHist, crop_patch=crop_patch, sample=True, generation=generation)
-        #         trian_folder = folder[0:2]
-
-        #         self.sample_dataset = ds
-        #         self.sample_loader = cycle(self.accelerator.prepare(DataLoader(self.sample_dataset, batch_size=num_samples, shuffle=True,
-        #                                                                        pin_memory=True, num_workers=4)))  # cpu_count()
-
-        #         ds = dataset(trian_folder, self.image_size, augment_flip=augment_flip,
-        #                      convert_image_to=convert_image_to, condition=1, equalizeHist=equalizeHist, crop_patch=crop_patch, generation=generation)
-        #         self.dl = cycle(self.accelerator.prepare(DataLoader(ds, batch_size=train_batch_size,
-        #                         shuffle=True, pin_memory=True, num_workers=4)))
-        #     elif len(folder) == 6:
-        #         self.condition_type = 3
-        #         # test_gt+test_input
-        #         ds = dataset(folder[3:6], self.image_size,
-        #                      augment_flip=False, convert_image_to=convert_image_to, condition=2, equalizeHist=equalizeHist, crop_patch=crop_patch, sample=True, generation=generation)
-        #         trian_folder = folder[0:3]
-
-        #         self.sample_dataset = ds
-        #         self.sample_loader = cycle(self.accelerator.prepare(DataLoader(self.sample_dataset, batch_size=num_samples, shuffle=True,
-        #                                                                        pin_memory=True, num_workers=4)))  # cpu_count()
-
-        #         ds = dataset(trian_folder, self.image_size, augment_flip=augment_flip,
-        #                      convert_image_to=convert_image_to, condition=2, equalizeHist=equalizeHist, crop_patch=crop_patch, generation=generation)
-        #         self.dl = cycle(self.accelerator.prepare(DataLoader(ds, batch_size=train_batch_size,
-        #                         shuffle=True, pin_memory=True, num_workers=4)))
-        # else:
-        #     self.condition_type = 0
-        #     trian_folder = folder
-
-        #     ds = dataset(trian_folder, self.image_size, augment_flip=augment_flip,
-        #                  convert_image_to=convert_image_to, condition=0, equalizeHist=equalizeHist, crop_patch=crop_patch, generation=generation)
-
-        #     self.dl = cycle(self.accelerator.prepare(DataLoader(ds, batch_size=train_batch_size,
-        #                     shuffle=True, pin_memory=True, num_workers=4)))
 
         self.condition_type = 2
 
