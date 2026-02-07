@@ -33,6 +33,7 @@ CUDA_VISIBLE_DEVICES=1 python train.py --name FoundDiff --is_train --train_num_s
 ```
 
 #### Inference & testing:
+Put DA-CLIP.pth in src/DA-Diff.py and model-400.pt in checkpoints/FoundDiff/sample  
 ```
 CUDA_VISIBLE_DEVICES=4 python train.py --name FoundDiff --epoch 400 --dataset 2020_seen
 ```
